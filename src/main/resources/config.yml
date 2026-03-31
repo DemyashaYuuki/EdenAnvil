@@ -1,0 +1,9 @@
+spin:
+  degrees-per-tick: 8.0
+  hide-refresh-ticks: 10
+  viewer-radius: 32.0
+sound:
+  key: "edenanvil:anvil_spin"
+  category: "BLOCKS"
+  volume: 1.6
+  pitch: 1.0

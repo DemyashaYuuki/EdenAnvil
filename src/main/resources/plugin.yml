@@ -1,0 +1,7 @@
+name: EdenAnvilSpin
+version: 1.0.0
+main: pro.edenworld.spinanvil.EdenAnvilSpinPlugin
+api-version: '1.21'
+author: OpenAI
+website: https://edenworld.pro
+description: Replaces an opened anvil with a spinning display entity and plays a custom sound.

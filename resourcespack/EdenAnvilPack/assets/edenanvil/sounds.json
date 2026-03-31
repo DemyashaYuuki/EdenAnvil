@@ -1,0 +1,10 @@
+{
+  "anvil_spin": {
+    "sounds": [
+      {
+        "name": "edenanvil:anvil_spin",
+        "stream": true
+      }
+    ]
+  }
+}
