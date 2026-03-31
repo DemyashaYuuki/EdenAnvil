@@ -1,0 +1,10 @@
+spin:
+  degrees-per-tick: 10.0
+  lift-blocks: 0.125
+  music-duration-seconds: 143.0
+  viewer-radius: 32.0
+sound:
+  key: "edenanvil:anvil_spin"
+  category: "RECORDS"
+  volume: 1.6
+  pitch: 1.0
