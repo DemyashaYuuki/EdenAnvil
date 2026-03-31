@@ -120,13 +120,13 @@ public final class EdenAnvilSpinPlugin extends JavaPlugin implements Listener {
 
         BlockKey key = BlockKey.from(block);
         if (sessions.containsKey(key)) {
-            getServer().getScheduler().runTask(this, player::closeInventory);
+            getServer().getScheduler().runTask(this, () -> player.closeInventory());
             return;
         }
 
         ActiveSession session = ActiveSession.start(block, this);
         sessions.put(key, session);
-        getServer().getScheduler().runTask(this, player::closeInventory);
+        getServer().getScheduler().runTask(this, () -> player.closeInventory());
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
