@@ -1,15 +1,20 @@
 # EdenAnvilSpin
 
-Purpur/Paper 1.21.10 plugin: when a player opens a real anvil block, the block is visually hidden for nearby players, a spinning anvil display appears, and a custom sound from the supplied resource pack starts playing.
+Purpur/Paper 1.21.10 plugin: when a player opens a **real placed anvil**, the GUI is immediately closed, the **real anvil block is removed from the world for the duration of the music**, a floating spinning `BlockDisplay` anvil appears slightly above the block position, and the custom sound from the supplied resource pack starts playing.
 
-## What it does
+## What it does now
 
 - detects opening of a **real placed anvil**
-- leaves the actual server block intact so the anvil GUI stays open
-- sends a **fake AIR block update** to nearby players so the original anvil appears gone
-- spawns a **BlockDisplay** using the anvil's own block data
-- rotates that display continuously while the anvil is in use
-- restores the visual block and stops the custom sound when the last viewer closes the anvil
+- immediately closes the anvil GUI for the player
+- removes the **actual anvil block** from the world for the configured duration
+- spawns a floating spinning **BlockDisplay** using the original anvil block data
+- plays the custom sound once when the animation starts
+- restores the original anvil block automatically when the timer ends
+- blocks breaking/placing into that exact block position while the animation is active
+
+## Default timing
+
+The default duration is set to **143.0 seconds** (`2860` ticks) in `config.yml`.
 
 ## Build locally
 
@@ -26,11 +31,11 @@ Upload this project to a GitHub repository and run the included Actions workflow
 ## Install
 
 1. Put the compiled plugin jar into `plugins/`.
-2. Put `EdenAnvilPack.zip` into the client's `resourcepacks/` folder, or host it and set it as the server resource pack.
+2. Put `EdenAnvilPack-v2.zip` into the client's `resourcepacks/` folder, or host it and set it as the server resource pack.
 3. Restart the server.
 
 ## Notes
 
 - This works only for **placed anvils**. Virtual anvils from other plugins are ignored.
-- The real block is not destroyed server-side; it is hidden client-side so the GUI keeps working.
 - The sound key is configurable in `config.yml`.
+- If another plugin or command forcibly places a block into the same spot during the animation, the plugin will avoid overwriting that block when restoring.

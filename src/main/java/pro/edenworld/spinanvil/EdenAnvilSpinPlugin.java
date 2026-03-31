@@ -1,6 +1,5 @@
 package pro.edenworld.spinanvil;
 
-import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.SoundCategory;
@@ -14,17 +13,14 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
-import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.event.inventory.InventoryType;
-import org.bukkit.event.player.PlayerKickEvent;
-import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 import org.joml.Matrix4f;
 
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
@@ -40,14 +36,13 @@ public final class EdenAnvilSpinPlugin extends JavaPlugin implements Listener {
     );
 
     private final Map<BlockKey, ActiveSession> sessions = new HashMap<>();
-    private final Map<UUID, Integer> soundUsageCounts = new HashMap<>();
 
     private BukkitTask tickTask;
 
     private float spinRadiansPerTick;
-    private int hideRefreshTicks;
-    private double viewerRadius;
-    private double viewerRadiusSquared;
+    private double liftBlocks;
+    private int musicDurationTicks;
+    private float displayViewRange;
     private String soundKey;
     private SoundCategory soundCategory;
     private float soundVolume;
@@ -69,10 +64,9 @@ public final class EdenAnvilSpinPlugin extends JavaPlugin implements Listener {
         }
 
         for (ActiveSession session : sessions.values()) {
-            session.cleanup(this);
+            session.restoreImmediately();
         }
         sessions.clear();
-        soundUsageCounts.clear();
     }
 
     @Override
@@ -83,24 +77,25 @@ public final class EdenAnvilSpinPlugin extends JavaPlugin implements Listener {
 
     private void reloadPluginConfig() {
         FileConfiguration config = getConfig();
-        this.spinRadiansPerTick = (float) Math.toRadians(config.getDouble("spin.degrees-per-tick", 8.0D));
-        this.hideRefreshTicks = Math.max(1, config.getInt("spin.hide-refresh-ticks", 10));
-        this.viewerRadius = Math.max(1.0D, config.getDouble("spin.viewer-radius", 32.0D));
-        this.viewerRadiusSquared = viewerRadius * viewerRadius;
+        this.spinRadiansPerTick = (float) Math.toRadians(config.getDouble("spin.degrees-per-tick", 10.0D));
+        this.liftBlocks = config.getDouble("spin.lift-blocks", 0.125D);
+        this.musicDurationTicks = Math.max(1, (int) Math.round(config.getDouble("spin.music-duration-seconds", 143.0D) * 20.0D));
+        this.displayViewRange = (float) Math.max(1.0D, config.getDouble("spin.viewer-radius", 32.0D));
         this.soundKey = config.getString("sound.key", "edenanvil:anvil_spin");
         this.soundVolume = (float) config.getDouble("sound.volume", 1.6D);
         this.soundPitch = (float) config.getDouble("sound.pitch", 1.0D);
 
-        String rawCategory = config.getString("sound.category", SoundCategory.BLOCKS.name());
+        String rawCategory = config.getString("sound.category", SoundCategory.RECORDS.name());
         if (rawCategory == null) {
-            this.soundCategory = SoundCategory.BLOCKS;
+            this.soundCategory = SoundCategory.RECORDS;
             return;
         }
+
         try {
             this.soundCategory = SoundCategory.valueOf(rawCategory.toUpperCase());
         } catch (IllegalArgumentException ex) {
-            getLogger().warning("Unknown sound.category '" + rawCategory + "', using BLOCKS.");
-            this.soundCategory = SoundCategory.BLOCKS;
+            getLogger().warning("Unknown sound.category '" + rawCategory + "', using RECORDS.");
+            this.soundCategory = SoundCategory.RECORDS;
         }
     }
 
@@ -124,94 +119,39 @@ public final class EdenAnvilSpinPlugin extends JavaPlugin implements Listener {
         }
 
         BlockKey key = BlockKey.from(block);
-        ActiveSession session = sessions.computeIfAbsent(key, ignored -> ActiveSession.create(block));
-        session.viewers.add(player.getUniqueId());
-        session.ensureDisplay(this);
-        session.hideForNearbyPlayers(this);
-        session.playForNearbyPlayers(this);
+        if (sessions.containsKey(key)) {
+            getServer().getScheduler().runTask(this, player::closeInventory);
+            return;
+        }
+
+        ActiveSession session = ActiveSession.start(block, this);
+        sessions.put(key, session);
+        getServer().getScheduler().runTask(this, player::closeInventory);
     }
 
-    @EventHandler(priority = EventPriority.MONITOR)
-    public void onInventoryClose(InventoryCloseEvent event) {
-        if (!(event.getPlayer() instanceof Player player)) {
-            return;
-        }
-        if (event.getInventory().getType() != InventoryType.ANVIL) {
-            return;
-        }
-
-        Location location = event.getInventory().getLocation();
-        if (location == null || location.getWorld() == null) {
-            return;
-        }
-
-        ActiveSession session = sessions.get(BlockKey.from(location));
-        if (session == null) {
-            return;
-        }
-
-        session.viewers.remove(player.getUniqueId());
-        if (session.viewers.isEmpty()) {
-            sessions.remove(session.key);
-            session.cleanup(this);
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onBlockPlace(BlockPlaceEvent event) {
+        if (sessions.containsKey(BlockKey.from(event.getBlockPlaced()))) {
+            event.setCancelled(true);
         }
     }
 
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBlockBreak(BlockBreakEvent event) {
-        Block block = event.getBlock();
-        if (!isAnvil(block.getType())) {
-            return;
-        }
-
-        ActiveSession session = sessions.remove(BlockKey.from(block));
-        if (session != null) {
-            session.cleanup(this);
-        }
-    }
-
-    @EventHandler
-    public void onQuit(PlayerQuitEvent event) {
-        removeViewerEverywhere(event.getPlayer().getUniqueId());
-    }
-
-    @EventHandler
-    public void onKick(PlayerKickEvent event) {
-        removeViewerEverywhere(event.getPlayer().getUniqueId());
-    }
-
-    private void removeViewerEverywhere(UUID playerId) {
-        Iterator<Map.Entry<BlockKey, ActiveSession>> iterator = sessions.entrySet().iterator();
-        while (iterator.hasNext()) {
-            Map.Entry<BlockKey, ActiveSession> entry = iterator.next();
-            ActiveSession session = entry.getValue();
-            session.viewers.remove(playerId);
-            if (session.viewers.isEmpty()) {
-                iterator.remove();
-                session.cleanup(this);
-            }
+        if (sessions.containsKey(BlockKey.from(event.getBlock()))) {
+            event.setCancelled(true);
         }
     }
 
     private void tickSessions() {
         Iterator<Map.Entry<BlockKey, ActiveSession>> iterator = sessions.entrySet().iterator();
         while (iterator.hasNext()) {
-            Map.Entry<BlockKey, ActiveSession> entry = iterator.next();
-            ActiveSession session = entry.getValue();
+            ActiveSession session = iterator.next().getValue();
 
-            if (!session.isStillValid()) {
+            session.tick(this);
+            if (session.isFinished()) {
                 iterator.remove();
-                session.cleanup(this);
-                continue;
-            }
-
-            session.rotate(this);
-
-            session.hideTickCounter++;
-            if (session.hideTickCounter >= hideRefreshTicks) {
-                session.hideTickCounter = 0;
-                session.hideForNearbyPlayers(this);
-                session.playForNearbyPlayers(this);
+                session.restoreImmediately();
             }
         }
     }
@@ -220,114 +160,66 @@ public final class EdenAnvilSpinPlugin extends JavaPlugin implements Listener {
         return ANVIL_TYPES.contains(type);
     }
 
-    private Set<Player> getNearbyPlayers(Location origin) {
-        Set<Player> players = new HashSet<>();
-        World world = origin.getWorld();
-        if (world == null) {
-            return players;
-        }
-
-        for (Player player : world.getPlayers()) {
-            if (player.getLocation().distanceSquared(origin) <= viewerRadiusSquared) {
-                players.add(player);
-            }
-        }
-        return players;
-    }
-
-    private void incrementSoundUsage(Player player) {
-        soundUsageCounts.merge(player.getUniqueId(), 1, Integer::sum);
-    }
-
-    private void decrementSoundUsage(Player player) {
-        UUID uuid = player.getUniqueId();
-        Integer current = soundUsageCounts.get(uuid);
-        if (current == null) {
-            return;
-        }
-
-        if (current <= 1) {
-            soundUsageCounts.remove(uuid);
-            player.stopSound(soundKey, soundCategory);
-            return;
-        }
-
-        soundUsageCounts.put(uuid, current - 1);
-    }
-
     private static final class ActiveSession {
-        private final BlockKey key;
         private final World world;
         private final Location blockLocation;
-        private final Set<UUID> viewers = new HashSet<>();
-        private final Set<UUID> hiddenRecipients = new HashSet<>();
-        private final Set<UUID> soundedRecipients = new HashSet<>();
-        private BlockData originalBlockData;
+        private final BlockData originalBlockData;
+        private final int totalDurationTicks;
         private BlockDisplay display;
         private float angle;
-        private int hideTickCounter;
+        private int ageTicks;
 
-        private ActiveSession(BlockKey key, World world, Location blockLocation, BlockData originalBlockData) {
-            this.key = key;
+        private ActiveSession(World world, Location blockLocation, BlockData originalBlockData, int totalDurationTicks) {
             this.world = world;
             this.blockLocation = blockLocation;
             this.originalBlockData = originalBlockData;
+            this.totalDurationTicks = totalDurationTicks;
         }
 
-        public static ActiveSession create(Block block) {
-            return new ActiveSession(
-                    BlockKey.from(block),
+        public static ActiveSession start(Block block, EdenAnvilSpinPlugin plugin) {
+            ActiveSession session = new ActiveSession(
                     block.getWorld(),
                     block.getLocation(),
-                    block.getBlockData().clone()
+                    block.getBlockData().clone(),
+                    plugin.musicDurationTicks
             );
-        }
 
-        public boolean isStillValid() {
-            return world != null && isAnvil(world.getBlockAt(blockLocation).getType());
-        }
+            block.setType(Material.AIR, false);
 
-        private static boolean isAnvil(Material material) {
-            return ANVIL_TYPES.contains(material);
-        }
-
-        public void ensureDisplay(EdenAnvilSpinPlugin plugin) {
-            Block currentBlock = world.getBlockAt(blockLocation);
-            this.originalBlockData = currentBlock.getBlockData().clone();
-
-            if (display != null && display.isValid()) {
-                display.setBlock(originalBlockData);
-                return;
-            }
-
-            display = world.spawn(blockLocation.clone(), BlockDisplay.class, spawned -> {
-                spawned.setBlock(originalBlockData);
+            session.display = session.world.spawn(session.blockLocation.clone(), BlockDisplay.class, spawned -> {
+                spawned.setBlock(session.originalBlockData);
                 spawned.setPersistent(false);
                 spawned.setInvulnerable(true);
                 spawned.setGravity(false);
                 spawned.setSilent(true);
                 spawned.setShadowRadius(0.0F);
-                spawned.setViewRange((float) Math.max(1.0D, plugin.viewerRadius));
+                spawned.setViewRange(plugin.displayViewRange);
                 spawned.setInterpolationDelay(0);
                 spawned.setInterpolationDuration(1);
             });
 
-            applyTransform();
+            session.applyTransform(plugin);
+            session.world.playSound(session.blockLocation, plugin.soundKey, plugin.soundCategory, plugin.soundVolume, plugin.soundPitch);
+            return session;
         }
 
-        public void rotate(EdenAnvilSpinPlugin plugin) {
-            ensureDisplay(plugin);
+        public void tick(EdenAnvilSpinPlugin plugin) {
+            ageTicks++;
             angle += plugin.spinRadiansPerTick;
-            applyTransform();
+            applyTransform(plugin);
         }
 
-        private void applyTransform() {
+        public boolean isFinished() {
+            return ageTicks >= totalDurationTicks;
+        }
+
+        private void applyTransform(EdenAnvilSpinPlugin plugin) {
             if (display == null || !display.isValid()) {
                 return;
             }
 
             Matrix4f matrix = new Matrix4f()
-                    .translate(0.5F, 0.5F, 0.5F)
+                    .translate(0.5F, (float) (0.5D + plugin.liftBlocks), 0.5F)
                     .rotateY(angle)
                     .translate(-0.5F, -0.5F, -0.5F);
 
@@ -336,42 +228,11 @@ public final class EdenAnvilSpinPlugin extends JavaPlugin implements Listener {
             display.setInterpolationDuration(1);
         }
 
-        public void hideForNearbyPlayers(EdenAnvilSpinPlugin plugin) {
-            BlockData air = Material.AIR.createBlockData();
-            for (Player nearby : plugin.getNearbyPlayers(blockLocation)) {
-                nearby.sendBlockChange(blockLocation, air);
-                hiddenRecipients.add(nearby.getUniqueId());
+        public void restoreImmediately() {
+            Block block = world.getBlockAt(blockLocation);
+            if (block.getType().isAir()) {
+                block.setBlockData(originalBlockData.clone(), false);
             }
-        }
-
-        public void playForNearbyPlayers(EdenAnvilSpinPlugin plugin) {
-            for (Player nearby : plugin.getNearbyPlayers(blockLocation)) {
-                if (!soundedRecipients.add(nearby.getUniqueId())) {
-                    continue;
-                }
-                nearby.playSound(blockLocation, plugin.soundKey, plugin.soundCategory, plugin.soundVolume, plugin.soundPitch);
-                plugin.incrementSoundUsage(nearby);
-            }
-        }
-
-        public void cleanup(EdenAnvilSpinPlugin plugin) {
-            BlockData actualData = world.getBlockAt(blockLocation).getBlockData();
-
-            for (UUID uuid : hiddenRecipients) {
-                Player player = Bukkit.getPlayer(uuid);
-                if (player != null && player.isOnline() && player.getWorld().equals(world)) {
-                    player.sendBlockChange(blockLocation, actualData);
-                }
-            }
-            hiddenRecipients.clear();
-
-            for (UUID uuid : soundedRecipients) {
-                Player player = Bukkit.getPlayer(uuid);
-                if (player != null && player.isOnline()) {
-                    plugin.decrementSoundUsage(player);
-                }
-            }
-            soundedRecipients.clear();
 
             if (display != null && display.isValid()) {
                 display.remove();

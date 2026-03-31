@@ -5,11 +5,11 @@
 
     <groupId>pro.edenworld</groupId>
     <artifactId>EdenAnvilSpin</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <packaging>jar</packaging>
 
     <name>EdenAnvilSpin</name>
-    <description>Spawns a spinning anvil display and plays a custom sound while an anvil is open.</description>
+    <description>Temporarily removes a real anvil, spawns a floating spinning BlockDisplay, and plays a custom sound.</description>
 
     <properties>
         <java.version>21</java.version>
